@@ -1,9 +1,32 @@
-venv/
-__pycache__/
-*.pyc
+# VCS / CI
 .git/
 .github/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Environments & secrets
+venv/
+.venv/
+.env
+.env.*
+
+# Not needed inside the image
 tests/
+docs/
+*.md
 Dockerfile
 .dockerignore
-.pytest_cache/
+docker-compose.yml
+Makefile
+.pre-commit-config.yaml
+.claude/
+.DS_Store

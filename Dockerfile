@@ -1,36 +1,60 @@
-# Etapa 1: Builder
-FROM python:3.11-slim AS builder
+# syntax=docker/dockerfile:1.7
+ARG PYTHON_VERSION=3.11
 
-WORKDIR /app
+# ═══════════════════════════════════════════════
+# Stage 1: Builder — resolve runtime deps into wheels
+# ═══════════════════════════════════════════════
+FROM python:${PYTHON_VERSION}-slim AS builder
 
-# Solo copiamos el requirements primero para aprovechar la caché de Docker
+WORKDIR /build
 COPY app/requirements.txt .
-RUN pip wheel --no-cache-dir --no-deps --wheel-dir /app/wheels -r requirements.txt
+RUN pip wheel --no-cache-dir --no-deps --wheel-dir /build/wheels -r requirements.txt
 
-# Etapa 2: Runner
-FROM python:3.11-slim
+# ═══════════════════════════════════════════════
+# Stage 2: Base — shared Python runtime settings
+# ═══════════════════════════════════════════════
+FROM python:${PYTHON_VERSION}-slim AS base
 
-# Crear usuario no root por seguridad (Least Privilege)
-RUN useradd -m -r appuser && \
-    mkdir /app && \
-    chown -R appuser /app
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /app
 
-# Copiar wheels desde el builder y dependencias
-COPY --from=builder /app/wheels /wheels
-COPY --from=builder /app/requirements.txt .
+# Wheels are bind-mounted, so they never become an image layer
+RUN --mount=type=bind,from=builder,source=/build/wheels,target=/wheels \
+    pip install /wheels/*
 
-RUN pip install --no-cache /wheels/*
-
-# Copiar el código de la app
-COPY app/ app/
-
-# Cambiar al usuario no root
-USER appuser
-
-# Exponer el puerto
 EXPOSE 5000
 
-# Comando para iniciar gunicorn (WSGI Server)
+# ═══════════════════════════════════════════════
+# Stage 3: Development — hot-reload + dev tooling
+# ═══════════════════════════════════════════════
+FROM base AS development
+
+COPY pyproject.toml .
+COPY app/ app/
+RUN pip install -e ".[dev]"
+
+CMD ["flask", "--app", "app.main", "run", "--host", "0.0.0.0", "--port", "5000", "--debug"]
+
+# ═══════════════════════════════════════════════
+# Stage 4: Runner — minimal, non-root production image
+# ═══════════════════════════════════════════════
+FROM base AS runner
+
+# Tunable at runtime without rebuilding (e.g. -e GUNICORN_CMD_ARGS="--workers 4")
+ENV GUNICORN_CMD_ARGS="--workers 2 --threads 4 --timeout 30 --access-logfile -"
+
+RUN groupadd --system --gid 10001 appuser && \
+    useradd --system --no-create-home --uid 10001 --gid 10001 appuser
+
+COPY --chown=10001:10001 app/ app/
+
+USER 10001:10001
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD ["python", "-c", "import urllib.request,sys; sys.exit(urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=2).status != 200)"]
+
 CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app.main:app"]
