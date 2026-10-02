@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cicd-pipeline"
+version = "1.0.0"
+description = "Production-ready Flask API with a security-gated CI/CD pipeline"
+requires-python = ">=3.11"
+dependencies = [
+    "Flask==3.0.3",
+    "gunicorn==22.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.2.2",
+    "pytest-cov==5.0.0",
+    "ruff==0.6.4",
+    "mypy==1.10.0",
+    "bandit==1.7.9",
+    "pre-commit==3.8.0",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "--strict-markers"
+
+[tool.bandit]
+exclude_dirs = ["tests", "venv"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+ignore_missing_imports = true
+disallow_untyped_defs = true
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+
+[tool.setuptools.packages.find]
+include = ["app*"]
