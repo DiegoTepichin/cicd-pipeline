@@ -1,0 +1,43 @@
+# ─── Python ────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ─── Virtual environment ───────────────────────
+venv/
+.venv/
+env/
+
+# ─── IDE / Editor ──────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ─── Environment ───────────────────────────────
+.env
+.env.local
+.env.production
+
+# ─── Docker ────────────────────────────────────
+.docker/
+
+# ─── Logs ──────────────────────────────────────
+*.log
+
+# ─── Tooling caches ────────────────────────────
+.ruff_cache/
+.mypy_cache/
+
+# ─── Local agent settings ──────────────────────
+.claude/settings.local.json
