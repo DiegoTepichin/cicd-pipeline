@@ -2,13 +2,30 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
+
+# Cancel superseded runs on the same branch/PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege for the GITHUB_TOKEN
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: diegotepichin/cicd-pipeline
 
 jobs:
-  ci-test-and-lint:
+  quality-gates:
+    name: Quality gates (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -16,31 +33,52 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           cache: "pip"
+          cache-dependency-path: pyproject.toml
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r app/requirements.txt
+          pip install -e ".[dev]"
 
-      - name: Linting with Ruff
+      - name: Lint & format check (Ruff)
         run: |
-          ruff check .
+          ruff check --output-format=github .
           ruff format --check .
 
-      - name: Security Scan with Bandit
-        run: |
-          bandit -r app/
+      - name: Type check (mypy)
+        run: mypy app tests
 
-      - name: Run Unit Tests
-        run: |
-          pytest tests/
+      - name: SAST (Bandit)
+        run: bandit -r app/
 
-  build-and-push:
-    needs: ci-test-and-lint
+      - name: Unit tests + coverage
+        run: pytest --cov=app --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage report
+        if: matrix.python-version == '3.11'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+
+  dockerfile-lint:
+    name: Dockerfile lint (Hadolint)
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+
+  build-scan-push:
+    name: Build, scan & publish image
+    needs: [quality-gates, dockerfile-lint]
+    runs-on: ubuntu-latest
+    env:
+      # Secrets cannot be used in step `if:` directly; expose a boolean instead
+      HAS_REGISTRY_CREDS: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -48,34 +86,55 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Build image (runner target)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: runner
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Smoke test container health
+        run: |
+          docker run -d --name smoke -p 5000:5000 "$IMAGE_NAME:${{ github.sha }}"
+          for i in $(seq 1 20); do
+            curl -fsS http://localhost:5000/health && exit 0
+            sleep 1
+          done
+          docker logs smoke
+          exit 1
+
+      - name: Vulnerability scan (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
       - name: Login to Docker Hub
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.HAS_REGISTRY_CREDS == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build Docker image
+      - name: Push image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.HAS_REGISTRY_CREDS == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
-          load: true
-          tags: diegotepichin/cicd-pipeline:${{ github.sha }}
-
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: 'diegotepichin/cicd-pipeline:${{ github.sha }}'
-          format: 'table'
-          exit-code: '1'
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
-
-      - name: Push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
+          target: runner
           push: true
+          cache-from: type=gha
           tags: |
-            diegotepichin/cicd-pipeline:${{ github.sha }}
-            diegotepichin/cicd-pipeline:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:latest
+
+      - name: Skip publish notice
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.HAS_REGISTRY_CREDS != 'true'
+        run: echo "::warning::DOCKERHUB_USERNAME/DOCKERHUB_TOKEN not configured — image built and scanned but not pushed."
