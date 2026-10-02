@@ -5,7 +5,7 @@
 Una API REST en Flask que pasa por un pipeline CI/CD con controles de seguridad: lint, tipado, SAST, pruebas, imagen Docker endurecida, prueba de humo, escaneo de vulnerabilidades y publicación en GHCR.
 
 [![CI/CD Pipeline](https://github.com/DiegoTepichin/cicd-pipeline/actions/workflows/ci-cd.yml/badge.svg?branch=main)](https://github.com/DiegoTepichin/cicd-pipeline/actions/workflows/ci-cd.yml?query=branch%3Amain)
-![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)
+![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)
 ![Docker](https://img.shields.io/badge/docker-multi--stage-2496ED)
 ![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-D7FF64)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -36,7 +36,7 @@ flowchart LR
     dev[Developer] -->|git commit| hooks[pre-commit<br/>ruff · mypy · hadolint]
     hooks -->|git push / PR| gha{GitHub Actions}
 
-    subgraph QG[Quality gates · matriz Python 3.11 / 3.12]
+    subgraph QG[Quality gates · matriz Python 3.11–3.14]
         lint[Ruff<br/>lint + format] --> types[mypy] --> sast[Bandit<br/>SAST] --> tests[pytest<br/>cobertura ≥ 90%]
     end
     gha --> QG
