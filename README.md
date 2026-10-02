@@ -12,7 +12,9 @@ A Flask REST API shipped through a security-gated CI/CD pipeline: lint, type che
 
 The API is deliberately small. It serves as the **vehicle for a complete software delivery chain**. Every change goes through linting, static typing, security analysis, tests with a coverage threshold, a hardened image build, a smoke test and a vulnerability scan. Only then is the image published to a container registry.
 
-<!-- TODO: screenshot — GitHub Actions run summary for a green push to main, showing the job graph (Quality gates ×2 → Dockerfile lint → Build, scan & publish image). Save as docs/pipeline-run.png and reference it here. -->
+![GitHub Actions run: four Python quality-gate jobs and Hadolint passing, then build, scan and publish of the image](docs/pipeline-run.png)
+
+*A green run on `main`: the Python 3.11–3.14 quality-gate matrix and Hadolint feed the build, smoke test, Trivy scan and GHCR publish job.*
 
 ---
 

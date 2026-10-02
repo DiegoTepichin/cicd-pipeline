@@ -12,7 +12,9 @@ Una API REST en Flask que pasa por un pipeline CI/CD con controles de seguridad:
 
 La API es deliberadamente pequeña. Su propósito es servir de **vehículo para una cadena de entrega de software completa**. Cada cambio pasa por lint, tipado estático, análisis de seguridad, pruebas con umbral de cobertura, construcción de una imagen endurecida, una prueba de humo y un escaneo de vulnerabilidades. Solo después de todo eso se publica la imagen en un registro de contenedores.
 
-<!-- TODO: screenshot — resumen de una ejecución verde de GitHub Actions en un push a main, con el grafo de jobs (Quality gates ×2 → Dockerfile lint → Build, scan & publish image). Guardar como docs/pipeline-run.png y referenciarla aquí. -->
+![Ejecución de GitHub Actions: los cuatro jobs de quality gates de Python y Hadolint pasan, y luego se construye, escanea y publica la imagen](docs/pipeline-run.png)
+
+*Una ejecución en verde sobre `main`: la matriz de quality gates de Python 3.11–3.14 y Hadolint alimentan el job de build, smoke test, escaneo con Trivy y publicación en GHCR.*
 
 ---
 
