@@ -18,7 +18,7 @@ dev = [
     "pytest-cov==5.0.0",
     "ruff==0.6.4",
     "mypy==1.10.0",
-    "bandit==1.7.9",
+    "bandit==1.9.4",
     "pre-commit==3.8.0",
 ]
 

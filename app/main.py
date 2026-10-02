@@ -39,7 +39,7 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
         logger.info("Request received at /")
         return jsonify(
             status="success",
-            message=f"Bienvenido a la API de {app.config['APP_NAME']}",
+            message=f"Welcome to the {app.config['APP_NAME']} API",
             version=app.config["APP_VERSION"],
         )
 

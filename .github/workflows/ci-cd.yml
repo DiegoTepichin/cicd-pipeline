@@ -16,7 +16,8 @@ permissions:
   contents: read
 
 env:
-  IMAGE_NAME: diegotepichin/cicd-pipeline
+  # GHCR requires lowercase image names
+  IMAGE_NAME: ghcr.io/diegotepichin/cicd-pipeline
 
 jobs:
   quality-gates:
@@ -25,13 +26,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
@@ -58,7 +59,7 @@ jobs:
 
       - name: Upload coverage report
         if: matrix.python-version == '3.11'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-xml
           path: coverage.xml
@@ -67,8 +68,8 @@ jobs:
     name: Dockerfile lint (Hadolint)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: hadolint/hadolint-action@v3.1.0
+      - uses: actions/checkout@v7
+      - uses: hadolint/hadolint-action@v3.5.0
         with:
           dockerfile: Dockerfile
 
@@ -76,18 +77,18 @@ jobs:
     name: Build, scan & publish image
     needs: [quality-gates, dockerfile-lint]
     runs-on: ubuntu-latest
-    env:
-      # Secrets cannot be used in step `if:` directly; expose a boolean instead
-      HAS_REGISTRY_CREDS: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+    permissions:
+      contents: read
+      packages: write # push to GHCR with the built-in GITHUB_TOKEN
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build image (runner target)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           target: runner
@@ -116,25 +117,24 @@ jobs:
           vuln-type: os,library
           severity: CRITICAL,HIGH
 
-      - name: Login to Docker Hub
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.HAS_REGISTRY_CREDS == 'true'
-        uses: docker/login-action@v3
+      - name: Login to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v4
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push image
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.HAS_REGISTRY_CREDS == 'true'
-        uses: docker/build-push-action@v5
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v7
         with:
           context: .
           target: runner
           push: true
           cache-from: type=gha
+          # Links the package to this repository on GitHub
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
           tags: |
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
             ${{ env.IMAGE_NAME }}:latest
-
-      - name: Skip publish notice
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.HAS_REGISTRY_CREDS != 'true'
-        run: echo "::warning::DOCKERHUB_USERNAME/DOCKERHUB_TOKEN not configured — image built and scanned but not pushed."
