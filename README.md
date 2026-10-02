@@ -46,7 +46,7 @@ flowchart LR
     hl --> build
     build --> smoke[Smoke test<br/>GET /health]
     smoke --> trivy[Trivy<br/>CRITICAL/HIGH = fail]
-    trivy -->|push to main only| ghcr[(GHCR<br/>:sha · :latest)]
+    trivy -->|push to main only| ghcr[(GHCR · amd64 + arm64<br/>:sha · :latest)]
 ```
 
 ### Multi-stage Docker image
@@ -100,7 +100,7 @@ flowchart TB
 | SAST | **Bandit** | Flags insecure Python patterns. It has already caught a real issue in this repo: a hardcoded `0.0.0.0` bind. |
 | Container | **Multi-stage Docker** | Wheels are bind-mounted from the builder and never become a layer. Runs as a non-root user with a fixed numeric UID (compatible with Kubernetes `runAsNonRoot`) and ships a `HEALTHCHECK`. Build-only tooling (setuptools, wheel) is removed from the runtime image. |
 | Image scanning | **Trivy** | Fails the pipeline on `CRITICAL`/`HIGH` CVEs that already have a fix. |
-| Registry | **GitHub Container Registry** | Authenticates with the built-in `GITHUB_TOKEN`, so there are no long-lived secrets to manage. |
+| Registry | **GitHub Container Registry** | Authenticates with the built-in `GITHUB_TOKEN`, so there are no long-lived secrets to manage. Images are multi-arch (`linux/amd64` and `linux/arm64`), so they run natively on x86 servers and on Apple Silicon or Graviton. |
 | CI/CD | **GitHub Actions** | Python matrix, pip and Buildx layer caching (GHA), `concurrency` to cancel superseded runs, and a read-only token by default (`packages: write` only for the publish job). |
 | Shift-left | **pre-commit** | Ruff, mypy and Hadolint run before every commit, so failures show up locally instead of in CI. |
 
@@ -174,7 +174,7 @@ docker pull ghcr.io/diegotepichin/cicd-pipeline:latest
 docker pull ghcr.io/diegotepichin/cicd-pipeline:<commit-sha>
 ```
 
-The job authenticates with the workflow's `GITHUB_TOKEN`, so no extra secrets are needed. Pull requests run the same build, smoke test and scan, but they don't publish.
+Images are built for `linux/amd64` and `linux/arm64`, and Docker pulls the right one automatically. The job authenticates with the workflow's `GITHUB_TOKEN`, so no extra secrets are needed. Pull requests run the same build, smoke test and scan, but they don't publish.
 
 ### Production integration
 
