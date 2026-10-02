@@ -41,3 +41,6 @@ env/
 
 # ─── Local agent settings ──────────────────────
 .claude/settings.local.json
+
+# ─── Local assistant guide (not published) ─────
+CLAUDE.md
