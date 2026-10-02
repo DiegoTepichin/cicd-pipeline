@@ -46,7 +46,7 @@ flowchart LR
     hl --> build
     build --> smoke[Smoke test<br/>GET /health]
     smoke --> trivy[Trivy<br/>CRITICAL/HIGH = fail]
-    trivy -->|solo push a main| ghcr[(GHCR<br/>:sha · :latest)]
+    trivy -->|solo push a main| ghcr[(GHCR · amd64 + arm64<br/>:sha · :latest)]
 ```
 
 ### Imagen Docker multi-stage
@@ -100,7 +100,7 @@ flowchart TB
 | SAST | **Bandit** | Detecta patrones inseguros en Python. Ya encontró un caso real en este repo: un bind a `0.0.0.0` hardcodeado. |
 | Contenedor | **Docker multi-stage** | Las wheels se montan desde el builder sin convertirse en capa. Corre con usuario no-root y UID numérico fijo (compatible con `runAsNonRoot` de Kubernetes) e incluye `HEALTHCHECK`. Las herramientas de build (setuptools, wheel) se eliminan de la imagen final. |
 | Escaneo de imagen | **Trivy** | Bloquea el pipeline ante CVEs `CRITICAL`/`HIGH` que ya tengan parche. |
-| Registro | **GitHub Container Registry** | Se autentica con el `GITHUB_TOKEN` integrado, sin secretos de larga duración que administrar. |
+| Registro | **GitHub Container Registry** | Se autentica con el `GITHUB_TOKEN` integrado, sin secretos de larga duración que administrar. Las imágenes son multi-arquitectura (`linux/amd64` y `linux/arm64`), así que corren de forma nativa en servidores x86 y en Apple Silicon o Graviton. |
 | CI/CD | **GitHub Actions** | Matriz de Python, caché de pip y de capas Buildx (GHA), `concurrency` para cancelar ejecuciones obsoletas y token de solo lectura por defecto (`packages: write` solo en el job de publicación). |
 | Shift-left | **pre-commit** | Ruff, mypy y Hadolint corren antes de cada commit, así los fallos aparecen en local y no en CI. |
 
@@ -174,7 +174,7 @@ docker pull ghcr.io/diegotepichin/cicd-pipeline:latest
 docker pull ghcr.io/diegotepichin/cicd-pipeline:<commit-sha>
 ```
 
-El job se autentica con el `GITHUB_TOKEN` del workflow, así que no hacen falta secretos adicionales. Los pull requests corren el mismo build, smoke test y escaneo, pero no publican.
+Las imágenes se construyen para `linux/amd64` y `linux/arm64`, y Docker descarga la correcta automáticamente. El job se autentica con el `GITHUB_TOKEN` del workflow, así que no hacen falta secretos adicionales. Los pull requests corren el mismo build, smoke test y escaneo, pero no publican.
 
 ### Integración en producción
 

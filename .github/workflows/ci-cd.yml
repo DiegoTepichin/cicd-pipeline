@@ -125,6 +125,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set up QEMU (arm64 emulation)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/setup-qemu-action@v4
+
       - name: Push image
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/build-push-action@v7
@@ -132,7 +136,10 @@ jobs:
           context: .
           target: runner
           push: true
+          # amd64 for servers, arm64 for Apple Silicon and Graviton
+          platforms: linux/amd64,linux/arm64
           cache-from: type=gha
+          cache-to: type=gha,mode=max
           # Links the package to this repository on GitHub
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
           tags: |
