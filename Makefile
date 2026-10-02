@@ -22,7 +22,7 @@ format: ## Auto-fix lint issues and format code
 	ruff format .
 
 typecheck: ## Static type checking
-	mypy app
+	mypy app tests
 
 security: ## Static security analysis (SAST)
 	bandit -r app/
