@@ -180,8 +180,9 @@ Medido localmente sobre este commit:
 |---------|-------|
 | Cobertura de pruebas | **97%** (umbral obligatorio: 90%) |
 | Suite de pruebas | 5 tests en < 1 s |
-| Imagen de producción (`runner`) | **233 MB** (vs. 352 MB del target `development`) |
+| Imagen de producción (`runner`) | **234 MB** (vs. 353 MB del target `development`) |
 | Hallazgos de Bandit / Hadolint / mypy | **0** |
+| CVEs CRITICAL/HIGH con parche (Trivy) | **0** |
 | Usuario en runtime | `uid=10001` (no-root) |
 
 **Escalabilidad.** La API no guarda estado, así que escala horizontalmente detrás de un balanceador sin cambios. Verticalmente, Gunicorn usa workers (procesos) × threads, configurable en runtime. Una regla habitual de partida es `workers = 2 × CPU + 1`.
