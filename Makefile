@@ -1,5 +1,7 @@
 .DEFAULT_GOAL := help
 IMAGE ?= cicd-pipeline:latest
+# Host port. On macOS, AirPlay Receiver already listens on 5000: use e.g. `make dev PORT=5001`
+PORT ?= 5000
 
 .PHONY: help install dev lint format typecheck security test check build run up down clean
 
@@ -11,7 +13,7 @@ install: ## Install the package with dev dependencies and git hooks
 	pre-commit install
 
 dev: ## Run the Flask dev server with auto-reload
-	flask --app app.main run --debug --port 5000
+	flask --app app.main run --debug --port $(PORT)
 
 lint: ## Lint and check formatting (same as CI)
 	ruff check .
@@ -36,10 +38,10 @@ build: ## Build the production image
 	docker build --target runner -t $(IMAGE) .
 
 run: ## Run the production image
-	docker run --rm -p 5000:5000 $(IMAGE)
+	docker run --rm -p $(PORT):5000 $(IMAGE)
 
 up: ## Start the dev stack (hot-reload) with docker compose
-	docker compose up --build
+	PORT=$(PORT) docker compose up --build
 
 down: ## Stop the dev stack
 	docker compose down

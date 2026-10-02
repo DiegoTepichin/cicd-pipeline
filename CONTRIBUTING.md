@@ -33,6 +33,8 @@ make install        # pip install -e ".[dev]" + pre-commit install
 | Production image | `make build`, then `make run` |
 | List all targets | `make help` |
 
+On macOS, AirPlay Receiver occupies port 5000. Append `PORT=5001` to `make dev`, `make run` or `make up` to use another host port.
+
 **Run `make check` before every push.** It runs the same gates as the `quality-gates` CI job: Ruff, mypy, Bandit and pytest with a 90% coverage floor.
 
 ## Pre-commit hooks

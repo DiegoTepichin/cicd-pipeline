@@ -124,6 +124,8 @@ make check                    # lint + typecheck + security + test (same gates a
 make dev                      # http://localhost:5000 with auto-reload
 ```
 
+> **macOS note:** AirPlay Receiver listens on port 5000, so `localhost:5000` answers with `403 AirTunes`. Pass another host port to any target, e.g. `make dev PORT=5001`, `make run PORT=5001` or `make up PORT=5001`, or turn off AirPlay Receiver in System Settings.
+
 ### Configuration
 
 | Variable            | Default                                                   | Purpose |
