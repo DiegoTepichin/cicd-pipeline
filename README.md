@@ -1,151 +1,161 @@
-# CI/CD Pipeline — API Flask lista para producción
+**English** | [Español](README.es.md)
 
-[![CI/CD Pipeline](https://github.com/DiegoTepichin/cicd-pipeline/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/DiegoTepichin/cicd-pipeline/actions/workflows/ci-cd.yml)
+# CI/CD Pipeline — Production-ready Flask API
+
+A Flask REST API shipped through a security-gated CI/CD pipeline: lint, type checking, SAST, tests, a hardened Docker image, a smoke test, a vulnerability scan and publishing to GHCR.
+
+[![CI/CD Pipeline](https://github.com/DiegoTepichin/cicd-pipeline/actions/workflows/ci-cd.yml/badge.svg?branch=main)](https://github.com/DiegoTepichin/cicd-pipeline/actions/workflows/ci-cd.yml?query=branch%3Amain)
 ![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)
 ![Docker](https://img.shields.io/badge/docker-multi--stage-2496ED)
 ![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-D7FF64)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-Una API REST en Flask deliberadamente pequeña. Su propósito es servir de **vehículo para una cadena de entrega de software completa**: cada cambio pasa por lint, tipado estático, análisis de seguridad, pruebas con umbral de cobertura, construcción de una imagen endurecida, una prueba de humo y un escaneo de vulnerabilidades. Solo después de todo eso se publica en un registro de contenedores.
+The API is deliberately small. It serves as the **vehicle for a complete software delivery chain**. Every change goes through linting, static typing, security analysis, tests with a coverage threshold, a hardened image build, a smoke test and a vulnerability scan. Only then is the image published to a container registry.
 
----
-
-## El problema que resuelve
-
-En muchos equipos el camino de "funciona en mi máquina" a "está en producción" es manual, inconsistente y sin controles de seguridad. Este repositorio muestra una plantilla reproducible para que:
-
-- **Ningún cambio llegue a `main` sin pasar quality gates automáticos.** Esos gates son los mismos en local (`make check`, pre-commit) y en CI.
-- **Las vulnerabilidades se detecten antes del despliegue**, a nivel de código (Bandit, SAST) y de imagen (Trivy: CVEs del SO y de librerías).
-- **El artefacto desplegable sea inmutable y trazable**: cada imagen se etiqueta con el SHA del commit que la produjo.
-- **El entorno local sea idéntico al de producción**, con Docker multi-stage y un target de desarrollo con hot-reload.
+<!-- TODO: screenshot — GitHub Actions run summary for a green push to main, showing the job graph (Quality gates ×2 → Dockerfile lint → Build, scan & publish image). Save as docs/pipeline-run.png and reference it here. -->
 
 ---
 
-## Arquitectura
+## Why
 
-### Flujo del pipeline
+On many teams, the path from "works on my machine" to "running in production" is manual, inconsistent and has no security controls. This repository is a reproducible template that ensures:
+
+- **No change reaches `main` without passing automated quality gates.** The gates are the same locally (`make check`, pre-commit) and in CI.
+- **Vulnerabilities are caught before deployment**, both in the code (Bandit, SAST) and in the image (Trivy: OS and library CVEs).
+- **The deployable artifact is immutable and traceable**: every image is tagged with the SHA of the commit that produced it.
+- **The local environment matches production**: the development and production images are built from the same base stage of a multi-stage Dockerfile, and the dev target has hot-reload.
+
+---
+
+## Architecture
+
+### Pipeline flow
 
 ```mermaid
 flowchart LR
     dev[Developer] -->|git commit| hooks[pre-commit<br/>ruff · mypy · hadolint]
     hooks -->|git push / PR| gha{GitHub Actions}
 
-    subgraph QG[Quality gates · matriz Python 3.11 / 3.12]
-        lint[Ruff<br/>lint + format] --> types[mypy] --> sast[Bandit<br/>SAST] --> tests[pytest<br/>cobertura ≥ 90%]
+    subgraph QG[Quality gates · Python 3.11 / 3.12 matrix]
+        lint[Ruff<br/>lint + format] --> types[mypy] --> sast[Bandit<br/>SAST] --> tests[pytest<br/>coverage ≥ 90%]
     end
     gha --> QG
     gha --> hl[Hadolint<br/>Dockerfile]
 
-    QG --> build[Buildx<br/>target: runner<br/>caché GHA]
+    QG --> build[Buildx<br/>target: runner<br/>GHA cache]
     hl --> build
     build --> smoke[Smoke test<br/>GET /health]
     smoke --> trivy[Trivy<br/>CRITICAL/HIGH = fail]
-    trivy -->|solo push a main| hub[(Docker Hub<br/>:sha · :latest)]
+    trivy -->|push to main only| ghcr[(GHCR<br/>:sha · :latest)]
 ```
 
-### Imagen Docker multi-stage
+### Multi-stage Docker image
 
 ```mermaid
 flowchart TB
     builder["builder<br/>pip wheel → /build/wheels"] -. bind mount .-> base
-    base["base<br/>python:3.11-slim + deps runtime"] --> development["development<br/>+ deps dev · flask --debug<br/>(docker compose)"]
-    base --> runner["runner (producción)<br/>UID 10001 no-root · Gunicorn<br/>HEALTHCHECK /health"]
+    base["base<br/>python:3.11-slim + runtime deps"] --> development["development<br/>+ dev deps · flask --debug<br/>(docker compose)"]
+    base --> runner["runner (production)<br/>non-root UID 10001 · Gunicorn<br/>HEALTHCHECK /health"]
 ```
 
-### Estructura del repositorio
+### Repository layout
 
 ```
 .
 ├── app/
-│   ├── main.py              # create_app() factory, rutas y manejadores de error
-│   └── requirements.txt     # Dependencias runtime (consumidas por Docker)
+│   ├── main.py              # create_app() factory, routes and error handlers
+│   └── requirements.txt     # Runtime dependencies (consumed by Docker)
 ├── tests/
-│   └── test_main.py         # Pruebas de endpoints y rutas de error
+│   └── test_main.py         # Endpoint and error-path tests
 ├── .github/workflows/
 │   └── ci-cd.yml            # Pipeline: quality gates → build → smoke → scan → push
 ├── Dockerfile               # builder / base / development / runner
-├── docker-compose.yml       # Stack local con hot-reload
-├── pyproject.toml           # Metadatos, dependencias y config de ruff/mypy/pytest/bandit
-├── .pre-commit-config.yaml  # Mismos gates que CI, antes de cada commit
-├── Makefile                 # Interfaz única de comandos (make help)
-└── .env.example             # Variables de entorno documentadas
+├── docker-compose.yml       # Local stack with hot-reload
+├── pyproject.toml           # Metadata, dependencies and ruff/mypy/pytest/bandit config
+├── .pre-commit-config.yaml  # Same gates as CI, before every commit
+├── Makefile                 # Single command interface (make help)
+└── .env.example             # Documented environment variables
 ```
 
 ### API
 
-| Método | Ruta      | Descripción                                       | Respuesta                                             |
-|--------|-----------|---------------------------------------------------|-------------------------------------------------------|
-| GET    | `/`       | Metadatos del servicio                            | `200 {"status":"success","message":…,"version":…}`    |
-| GET    | `/health` | Liveness probe (Docker, balanceadores, K8s)       | `200 {"status":"healthy"}`                            |
-| *      | otra ruta | Error HTTP serializado como JSON                  | `404/405 {"status":"error","error":…,"message":…}`    |
-| *      | excepción | Error interno genérico, sin filtrar detalles      | `500 {"status":"error","error":"Internal Server Error"}` |
+| Method | Path        | Description                                      | Response                                                 |
+|--------|-------------|--------------------------------------------------|----------------------------------------------------------|
+| GET    | `/`         | Service metadata                                 | `200 {"status":"success","message":…,"version":…}`       |
+| GET    | `/health`   | Liveness probe (Docker, load balancers, K8s)     | `200 {"status":"healthy"}`                               |
+| *      | other paths | HTTP error serialized as JSON                    | `404/405 {"status":"error","error":…,"message":…}`       |
+| *      | exception   | Generic internal error, no details leaked        | `500 {"status":"error","error":"Internal Server Error"}` |
 
 ---
 
-## Stack tecnológico y decisiones
+## Tech stack and key decisions
 
-| Área | Elección | Por qué |
-|------|----------|---------|
-| Framework | **Flask 3** + application factory | Mínimo y explícito. `create_app()` permite instancias aisladas por test y configuración inyectable. |
-| Servidor WSGI | **Gunicorn** | El servidor de desarrollo de Flask no sirve para producción. Workers e hilos se ajustan con `GUNICORN_CMD_ARGS` sin reconstruir la imagen. |
-| Empaquetado | **pyproject.toml** (PEP 621) | Una sola fuente de verdad para dependencias y herramientas. `requirements.txt` queda solo con lo de runtime para que la imagen sea ligera. |
-| Lint / formato | **Ruff** | Sustituye a flake8, isort, black y pyupgrade con una sola herramienta muy rápida. Incluye reglas `S` (bandit) y `B` (bugbear). |
-| Tipado | **mypy** (`disallow_untyped_defs`) | Exige firmas tipadas, así los errores de contrato aparecen antes de ejecutar el código. |
-| SAST | **Bandit** | Detecta patrones inseguros en Python. Ya encontró un caso real: un bind a `0.0.0.0` hardcodeado. |
-| Contenedor | **Docker multi-stage** | Las wheels se montan desde el builder sin convertirse en capa. El usuario es no-root con UID numérico fijo (compatible con `runAsNonRoot` de Kubernetes), e incluye `HEALTHCHECK`. |
-| Escaneo de imagen | **Trivy** | Bloquea el pipeline ante CVEs `CRITICAL`/`HIGH` que ya tengan parche. |
-| CI/CD | **GitHub Actions** | Matriz de Python, caché de pip y de capas Buildx (GHA), `concurrency` para cancelar ejecuciones obsoletas y `permissions: contents: read`. |
-| Shift-left | **pre-commit** | Ruff, mypy y Hadolint corren antes de cada commit, así se falla en local y no en CI. |
+| Area | Choice | Why |
+|------|--------|-----|
+| Framework | **Flask 3** + application factory | Minimal and explicit. `create_app()` gives each test an isolated instance with injectable config. |
+| WSGI server | **Gunicorn** | Flask's dev server isn't meant for production. Workers and threads are tuned through `GUNICORN_CMD_ARGS` without rebuilding the image. |
+| Packaging | **pyproject.toml** (PEP 621) | A single source of truth for dependencies and tooling. `requirements.txt` holds only runtime deps to keep the image lean. |
+| Lint / format | **Ruff** | One very fast tool that replaces flake8, isort, black and pyupgrade. Includes the `S` (bandit) and `B` (bugbear) rules. |
+| Typing | **mypy** (`disallow_untyped_defs`) | Requires typed signatures, so contract errors surface before the code runs. |
+| SAST | **Bandit** | Flags insecure Python patterns. It has already caught a real issue in this repo: a hardcoded `0.0.0.0` bind. |
+| Container | **Multi-stage Docker** | Wheels are bind-mounted from the builder and never become a layer. Runs as a non-root user with a fixed numeric UID (compatible with Kubernetes `runAsNonRoot`) and ships a `HEALTHCHECK`. Build-only tooling (setuptools, wheel) is removed from the runtime image. |
+| Image scanning | **Trivy** | Fails the pipeline on `CRITICAL`/`HIGH` CVEs that already have a fix. |
+| Registry | **GitHub Container Registry** | Authenticates with the built-in `GITHUB_TOKEN`, so there are no long-lived secrets to manage. |
+| CI/CD | **GitHub Actions** | Python matrix, pip and Buildx layer caching (GHA), `concurrency` to cancel superseded runs, and a read-only token by default (`packages: write` only for the publish job). |
+| Shift-left | **pre-commit** | Ruff, mypy and Hadolint run before every commit, so failures show up locally instead of in CI. |
 
 ---
 
-## Puesta en marcha
+## Getting started
 
-### Requisitos
+### Requirements
 
 - Python 3.11+
-- Docker 24+ con BuildKit (incluido en Docker Desktop)
-- `make` (opcional, pero recomendado)
+- Docker 24+ with BuildKit (included in Docker Desktop)
+- `make`
 
-### 1. Configuración
-
-```bash
-git clone https://github.com/DiegoTepichin/cicd-pipeline.git
-cd cicd-pipeline
-cp .env.example .env          # ajusta valores si lo necesitas
-```
-
-| Variable            | Default                                                | Uso |
-|---------------------|--------------------------------------------------------|-----|
-| `APP_NAME`          | `CI/CD Pipeline`                                       | Nombre que devuelve `/` |
-| `APP_VERSION`       | `1.0.0`                                                | Versión que devuelve `/` |
-| `LOG_LEVEL`         | `INFO`                                                 | Nivel de logging (`DEBUG`, `INFO`, `WARNING`…) |
-| `HOST` / `PORT`     | `127.0.0.1` / `5000`                                   | Solo para `python -m app.main` |
-| `GUNICORN_CMD_ARGS` | `--workers 2 --threads 4 --timeout 30 --access-logfile -` | Tuning de Gunicorn en la imagen de producción |
-
-### 2. Desarrollo local
-
-**Opción A, con virtualenv:**
+### Quickstart
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+git clone https://github.com/DiegoTepichin/cicd-pipeline.git && cd cicd-pipeline
+python3 -m venv .venv && source .venv/bin/activate
 make install                  # pip install -e ".[dev]" + pre-commit install
-make dev                      # http://localhost:5000 con auto-reload
+make check                    # lint + typecheck + security + test (same gates as CI)
+make dev                      # http://localhost:5000 with auto-reload
 ```
 
-**Opción B, con Docker Compose (hot-reload):**
+### Configuration
+
+| Variable            | Default                                                   | Purpose |
+|---------------------|-----------------------------------------------------------|---------|
+| `APP_NAME`          | `CI/CD Pipeline`                                          | Name returned by `/` |
+| `APP_VERSION`       | `1.0.0`                                                   | Version returned by `/` |
+| `LOG_LEVEL`         | `INFO`                                                    | Logging level (`DEBUG`, `INFO`, `WARNING`…) |
+| `HOST` / `PORT`     | `127.0.0.1` / `5000`                                      | Only for `python -m app.main` |
+| `GUNICORN_CMD_ARGS` | `--workers 2 --threads 4 --timeout 30 --access-logfile -` | Gunicorn tuning in the production image |
+
+Set these as regular environment variables, or with `docker run -e`. A `.env` file (`cp .env.example .env`) is **only read by Docker Compose** (`make up`). `make dev` and `python -m app.main` do not load it.
+
+### Running tests
 
 ```bash
-make up                       # docker compose up --build
+make test                     # pytest with coverage report
+make check                    # every CI gate: ruff, mypy, bandit, pytest
+make help                     # list all targets
 ```
 
-### 3. Verificación (los mismos gates que CI)
+The suite has **97% coverage, CI-enforced ≥90%** (`fail_under` in `pyproject.toml`).
+
+### Docker
+
+**Development stack (hot-reload):**
 
 ```bash
-make check                    # lint + typecheck + security + test
-make help                     # lista todos los comandos
+make up                       # docker compose up --build → http://localhost:5000
+make down
 ```
 
-### 4. Imagen de producción
+**Production image:**
 
 ```bash
 make build                    # docker build --target runner
@@ -153,58 +163,64 @@ make run                      # http://localhost:5000
 curl localhost:5000/health    # {"status":"healthy"}
 ```
 
-### 5. Publicación continua (Docker Hub)
+### Continuous delivery (GHCR)
 
-El job `build-scan-push` publica `:<sha>` y `:latest` en cada push a `main`. Para activarlo, configura en **Settings → Secrets and variables → Actions**:
+On every push to `main`, the `build-scan-push` job publishes the image after it passes the smoke test and the Trivy scan:
 
-- `DOCKERHUB_USERNAME`
-- `DOCKERHUB_TOKEN` (un [access token](https://docs.docker.com/security/for-developers/access-tokens/) con permiso *Read & Write*, nunca la contraseña)
+```bash
+docker pull ghcr.io/diegotepichin/cicd-pipeline:latest
+docker pull ghcr.io/diegotepichin/cicd-pipeline:<commit-sha>
+```
 
-Si faltan los secretos, el pipeline igual construye, prueba y escanea la imagen. Solo omite el push y deja un *warning*, sin romper el build.
+The job authenticates with the workflow's `GITHUB_TOKEN`, so no extra secrets are needed. Pull requests run the same build, smoke test and scan, but they don't publish.
 
-### Integración en producción
+### Production integration
 
-La imagen `runner` es stateless y se configura por completo con variables de entorno, así que se despliega igual en cualquier orquestador:
+The `runner` image is stateless and fully configured through environment variables. It is **designed to be compatible with Kubernetes, AWS ECS and Cloud Run**, although it hasn't been deployed to any of them as part of this project:
 
-- **Kubernetes:** usa `/health` como `livenessProbe` y `readinessProbe`. El UID numérico 10001 cumple `runAsNonRoot: true`.
-- **AWS ECS / Cloud Run / Azure Container Apps:** expón el puerto `5000` y ajusta la concurrencia con `GUNICORN_CMD_ARGS`.
-- **Rollbacks:** despliega por tag de SHA, no por `:latest`. Cada imagen es inmutable y trazable a su commit.
+- **Kubernetes:** `/health` can serve as `livenessProbe` and `readinessProbe`. The numeric UID 10001 satisfies `runAsNonRoot: true`.
+- **ECS / Cloud Run:** expose port `5000` and tune concurrency with `GUNICORN_CMD_ARGS`.
+- **Rollbacks:** deploy by SHA tag, not `:latest`. Every image is immutable and traceable to its commit.
 
 ---
 
-## Métricas y buenas prácticas
+## Metrics and practices
 
-Medido localmente sobre este commit:
+Measured locally on this commit:
 
-| Métrica | Valor |
-|---------|-------|
-| Cobertura de pruebas | **97%** (umbral obligatorio: 90%) |
-| Suite de pruebas | 5 tests en < 1 s |
-| Imagen de producción (`runner`) | **234 MB** (vs. 353 MB del target `development`) |
-| Hallazgos de Bandit / Hadolint / mypy | **0** |
-| CVEs CRITICAL/HIGH con parche (Trivy) | **0** |
-| Usuario en runtime | `uid=10001` (no-root) |
+| Metric | Value |
+|--------|-------|
+| Test coverage | **97%** (CI-enforced minimum: 90%) |
+| Test suite | 5 tests in < 1 s |
+| Production image (`runner`) | **234 MB** (vs. 353 MB for the `development` target) |
+| Bandit / Hadolint / mypy findings | **0** |
+| Fixable CRITICAL/HIGH CVEs (Trivy) | **0** |
+| Runtime user | `uid=10001` (non-root) |
 
-**Escalabilidad.** La API no guarda estado, así que escala horizontalmente detrás de un balanceador sin cambios. Verticalmente, Gunicorn usa workers (procesos) × threads, configurable en runtime. Una regla habitual de partida es `workers = 2 × CPU + 1`.
+**Scalability.** The API is stateless, so it scales horizontally behind a load balancer with no changes. Vertically, Gunicorn uses workers (processes) × threads, configurable at runtime. A common starting point is `workers = 2 × CPU + 1`.
 
-**Prácticas aplicadas:** 12-Factor App (configuración por entorno, logs a stdout), principio de mínimo privilegio (contenedor no-root, token de CI de solo lectura), shift-left security (SAST + escaneo de imagen + pre-commit), artefactos inmutables, errores que no exponen detalles internos y Conventional Commits.
+**Practices applied:** 12-Factor App (config through the environment, logs to stdout), least privilege (non-root container, read-only CI token by default), shift-left security (SAST, image scanning, pre-commit), immutable artifacts, errors that never leak internal details, and Conventional Commits.
 
 ---
 
 ## Roadmap
 
-- [ ] Fijar las GitHub Actions por SHA (protección de supply chain)
-- [ ] Generar SBOM y firmar la imagen (Syft + Cosign)
-- [ ] Logging estructurado en JSON y endpoint `/metrics` (Prometheus)
-- [ ] Separar `liveness` y `readiness` cuando existan dependencias externas
-- [ ] Despliegue automático a un entorno de staging
+- [ ] Pin every GitHub Action by commit SHA (Trivy already is)
+- [ ] Generate an SBOM and sign the image (Syft + Cosign)
+- [ ] Structured JSON logging and a `/metrics` endpoint (Prometheus)
+- [ ] Separate liveness and readiness once there are external dependencies
+- [ ] Automatic deployment to a staging environment
 
 ---
 
-## Contribuir
+## Contributing
 
-Consulta [CLAUDE.md](CLAUDE.md) para ver las convenciones de código, el flujo de Git y los comandos del repositorio.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the `make check` workflow and commit conventions.
 
-## Autor
+## License
 
-**Diego Durón Tepichín** · [GitHub @DiegoTepichin](https://github.com/DiegoTepichin)
+[MIT](LICENSE) © 2026 Diego Tepichin
+
+## Author
+
+**Diego Tepichin**, Systems Engineer · Founder of CAFE · [GitHub @DiegoTepichin](https://github.com/DiegoTepichin)
