@@ -20,6 +20,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
+# Apply Debian security patches not yet rolled into the upstream base image
+# hadolint ignore=DL3005
+RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Wheels are bind-mounted, so they never become an image layer
@@ -47,7 +53,10 @@ FROM base AS runner
 # Tunable at runtime without rebuilding (e.g. -e GUNICORN_CMD_ARGS="--workers 4")
 ENV GUNICORN_CMD_ARGS="--workers 2 --threads 4 --timeout 30 --access-logfile -"
 
-RUN groupadd --system --gid 10001 appuser && \
+# Build tooling is not needed at runtime and only adds attack surface (CVE-flagged
+# vendored packages); pip itself is kept for debugging inside the container.
+RUN pip uninstall -y setuptools wheel && \
+    groupadd --system --gid 10001 appuser && \
     useradd --system --no-create-home --uid 10001 --gid 10001 appuser
 
 COPY --chown=10001:10001 app/ app/
