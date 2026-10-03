@@ -2,7 +2,7 @@
 
 # CI/CD Pipeline — API Flask lista para producción
 
-Una API REST en Flask que pasa por un pipeline CI/CD con controles de seguridad: lint, tipado, SAST, pruebas, imagen Docker endurecida, prueba de humo, escaneo de vulnerabilidades y publicación en GHCR.
+Una API REST en Flask que pasa por un pipeline CI/CD con controles de seguridad: lint, tipado, SAST, pruebas, imagen Docker endurecida, prueba de humo, escaneo de vulnerabilidades y publicación en GHCR de una imagen firmada y con SBOM.
 
 [![CI/CD Pipeline](https://github.com/DiegoTepichin/cicd-pipeline/actions/workflows/ci-cd.yml/badge.svg?branch=main)](https://github.com/DiegoTepichin/cicd-pipeline/actions/workflows/ci-cd.yml?query=branch%3Amain)
 ![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)
@@ -10,7 +10,7 @@ Una API REST en Flask que pasa por un pipeline CI/CD con controles de seguridad:
 ![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-D7FF64)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-La API es deliberadamente pequeña. Su propósito es servir de **vehículo para una cadena de entrega de software completa**. Cada cambio pasa por lint, tipado estático, análisis de seguridad, pruebas con umbral de cobertura, construcción de una imagen endurecida, una prueba de humo y un escaneo de vulnerabilidades. Solo después de todo eso se publica la imagen en un registro de contenedores.
+La API es deliberadamente pequeña. Su propósito es servir de **vehículo para una cadena de entrega de software completa**. Cada cambio pasa por lint, tipado estático, análisis de seguridad, pruebas con umbral de cobertura, construcción de una imagen endurecida, una prueba de humo y un escaneo de vulnerabilidades. Solo después de todo eso se firma la imagen y se publica en un registro de contenedores.
 
 ![Ejecución de GitHub Actions: los cuatro jobs de quality gates de Python y Hadolint pasan, y luego se construye, escanea y publica la imagen](docs/pipeline-run.png)
 
@@ -25,6 +25,7 @@ En muchos equipos, el camino de "funciona en mi máquina" a "está en producció
 - **Ningún cambio llegue a `main` sin pasar quality gates automáticos.** Los gates son los mismos en local (`make check`, pre-commit) y en CI.
 - **Las vulnerabilidades se detecten antes del despliegue**, tanto en el código (Bandit, SAST) como en la imagen (Trivy: CVEs del SO y de librerías).
 - **El artefacto desplegable sea inmutable y trazable**: cada imagen se etiqueta con el SHA del commit que la produjo.
+- **Lo que se escanea sea exactamente lo que se publica**: la imagen se sube una sola vez por digest, pasa los controles, se firma con Cosign y solo entonces recibe tags. Incluye SBOM y procedencia del build, así que cualquiera puede verificar de dónde viene y qué contiene.
 - **El entorno local se parezca al de producción**: las imágenes de desarrollo y de producción salen del mismo stage base de un Dockerfile multi-stage, y el target de desarrollo tiene hot-reload.
 
 ---
@@ -44,12 +45,15 @@ flowchart LR
     gha --> QG
     gha --> hl[Hadolint<br/>Dockerfile]
 
-    QG --> build[Buildx<br/>target: runner<br/>caché GHA]
+    QG --> build[Buildx · amd64 + arm64<br/>push por digest, sin tag<br/>+ SBOM + procedencia]
     hl --> build
     build --> smoke[Smoke test<br/>GET /health]
-    smoke --> trivy[Trivy<br/>CRITICAL/HIGH = fail]
-    trivy -->|solo push a main| ghcr[(GHCR · amd64 + arm64<br/>:sha · :latest)]
+    smoke --> trivy[Trivy · por plataforma<br/>CRITICAL/HIGH = fail]
+    trivy --> sign[Cosign<br/>firma keyless]
+    sign --> ghcr[(GHCR<br/>tag :sha · :latest)]
 ```
+
+El diagrama muestra un push a `main`. Los pull requests corren los mismos controles sobre un build local de una sola arquitectura y nunca publican.
 
 ### Imagen Docker multi-stage
 
@@ -70,7 +74,8 @@ flowchart TB
 ├── tests/
 │   └── test_main.py         # Pruebas de endpoints y rutas de error
 ├── .github/workflows/
-│   └── ci-cd.yml            # Pipeline: quality gates → build → smoke → scan → push
+│   └── ci-cd.yml            # Pipeline: quality gates → build → smoke → scan → firma → tag
+├── .github/dependabot.yml   # Actualizaciones semanales de actions fijadas y deps de Python
 ├── Dockerfile               # builder / base / development / runner
 ├── docker-compose.yml       # Stack local con hot-reload
 ├── pyproject.toml           # Metadatos, dependencias y config de ruff/mypy/pytest/bandit
@@ -101,9 +106,10 @@ flowchart TB
 | Tipado | **mypy** (`disallow_untyped_defs`) | Exige firmas tipadas, así los errores de contrato aparecen antes de ejecutar el código. |
 | SAST | **Bandit** | Detecta patrones inseguros en Python. Ya encontró un caso real en este repo: un bind a `0.0.0.0` hardcodeado. |
 | Contenedor | **Docker multi-stage** | Las wheels se montan desde el builder sin convertirse en capa. Corre con usuario no-root y UID numérico fijo (compatible con `runAsNonRoot` de Kubernetes) e incluye `HEALTHCHECK`. Las herramientas de build (setuptools, wheel) se eliminan de la imagen final. |
-| Escaneo de imagen | **Trivy** | Bloquea el pipeline ante CVEs `CRITICAL`/`HIGH` que ya tengan parche. |
+| Escaneo de imagen | **Trivy** | Bloquea el pipeline ante CVEs `CRITICAL`/`HIGH` que ya tengan parche. En `main` escanea el digest publicado, en ambas arquitecturas. |
+| Cadena de suministro | **Cosign** (keyless) + SBOM/procedencia de **BuildKit** | La imagen se firma con la identidad OIDC del workflow a través de Sigstore, sin llaves que guardar ni rotar. Cada plataforma lleva un SBOM SPDX y procedencia SLSA, y la firma los cubre. |
 | Registro | **GitHub Container Registry** | Se autentica con el `GITHUB_TOKEN` integrado, sin secretos de larga duración que administrar. Las imágenes son multi-arquitectura (`linux/amd64` y `linux/arm64`), así que corren de forma nativa en servidores x86 y en Apple Silicon o Graviton. |
-| CI/CD | **GitHub Actions** | Matriz de Python, caché de pip y de capas Buildx (GHA), `concurrency` para cancelar ejecuciones obsoletas y token de solo lectura por defecto (`packages: write` solo en el job de publicación). |
+| CI/CD | **GitHub Actions** | Matriz de Python, caché de pip y de capas Buildx (GHA), `concurrency` para cancelar ejecuciones obsoletas y token de solo lectura por defecto (`packages: write` e `id-token: write` solo en el job de publicación). Cada action está fijada por SHA de commit y **Dependabot** la mantiene al día. |
 | Shift-left | **pre-commit** | Ruff, mypy y Hadolint corren antes de cada commit, así los fallos aparecen en local y no en CI. |
 
 ---
@@ -169,14 +175,25 @@ curl localhost:5000/health    # {"status":"healthy"}
 
 ### Publicación continua (GHCR)
 
-En cada push a `main`, el job `build-scan-push` publica la imagen después de que pasa el smoke test y el escaneo de Trivy:
+En cada push a `main`, el job `publish` construye la imagen multi-arquitectura una sola vez y la sube **por digest, sin tag**. Después corre el smoke test y un escaneo de Trivy por arquitectura sobre ese mismo digest, lo firma con Cosign y solo entonces apunta los tags `:<commit-sha>` y `:latest` hacia él. Si algún control falla, ningún tag se mueve:
 
 ```bash
 docker pull ghcr.io/diegotepichin/cicd-pipeline:latest
 docker pull ghcr.io/diegotepichin/cicd-pipeline:<commit-sha>
 ```
 
-Las imágenes se construyen para `linux/amd64` y `linux/arm64`, y Docker descarga la correcta automáticamente. El job se autentica con el `GITHUB_TOKEN` del workflow, así que no hacen falta secretos adicionales. Los pull requests corren el mismo build, smoke test y escaneo, pero no publican.
+Las imágenes se construyen para `linux/amd64` y `linux/arm64`, y Docker descarga la correcta automáticamente. El job se autentica con el `GITHUB_TOKEN` del workflow, así que no hacen falta secretos adicionales. Los pull requests corren el build, el smoke test y el escaneo en el job `image-check`, pero no suben nada.
+
+**Verificar una imagen** (requiere [Cosign](https://docs.sigstore.dev/cosign/system_config/installation/)). La firma debe venir del workflow de este repositorio en `main`. Los dos últimos comandos muestran el SBOM y la procedencia del build:
+
+```bash
+cosign verify ghcr.io/diegotepichin/cicd-pipeline:latest \
+  --certificate-identity https://github.com/DiegoTepichin/cicd-pipeline/.github/workflows/ci-cd.yml@refs/heads/main \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+docker buildx imagetools inspect ghcr.io/diegotepichin/cicd-pipeline:latest --format '{{ json .SBOM }}'
+docker buildx imagetools inspect ghcr.io/diegotepichin/cicd-pipeline:latest --format '{{ json .Provenance }}'
+```
 
 ### Integración en producción
 
@@ -203,14 +220,14 @@ Medido localmente sobre este commit:
 
 **Escalabilidad.** La API no guarda estado, así que escala horizontalmente detrás de un balanceador sin cambios. Verticalmente, Gunicorn usa workers (procesos) × threads, configurable en runtime. Una regla habitual de partida es `workers = 2 × CPU + 1`.
 
-**Prácticas aplicadas:** 12-Factor App (configuración por entorno, logs a stdout), mínimo privilegio (contenedor no-root, token de CI de solo lectura por defecto), shift-left security (SAST, escaneo de imagen, pre-commit), artefactos inmutables, errores que no exponen detalles internos y Conventional Commits.
+**Prácticas aplicadas:** 12-Factor App (configuración por entorno, logs a stdout), mínimo privilegio (contenedor no-root, token de CI de solo lectura por defecto), shift-left security (SAST, escaneo de imagen, pre-commit), seguridad de la cadena de suministro (imágenes firmadas, SBOM, procedencia, actions fijadas por SHA), artefactos inmutables, errores que no exponen detalles internos y Conventional Commits.
 
 ---
 
 ## Roadmap
 
-- [ ] Fijar todas las GitHub Actions por SHA (Trivy ya lo está)
-- [ ] Generar SBOM y firmar la imagen (Syft + Cosign)
+- [x] Fijar todas las GitHub Actions por SHA, con actualizaciones de Dependabot
+- [x] Generar SBOM y firmar la imagen (escáner Syft de BuildKit + Cosign)
 - [ ] Logging estructurado en JSON y endpoint `/metrics` (Prometheus)
 - [ ] Separar liveness y readiness cuando existan dependencias externas
 - [ ] Despliegue automático a un entorno de staging

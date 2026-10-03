@@ -2,7 +2,7 @@
 
 # CI/CD Pipeline — Production-ready Flask API
 
-A Flask REST API shipped through a security-gated CI/CD pipeline: lint, type checking, SAST, tests, a hardened Docker image, a smoke test, a vulnerability scan and publishing to GHCR.
+A Flask REST API shipped through a security-gated CI/CD pipeline: lint, type checking, SAST, tests, a hardened Docker image, a smoke test, a vulnerability scan, and a signed, SBOM-attested image published to GHCR.
 
 [![CI/CD Pipeline](https://github.com/DiegoTepichin/cicd-pipeline/actions/workflows/ci-cd.yml/badge.svg?branch=main)](https://github.com/DiegoTepichin/cicd-pipeline/actions/workflows/ci-cd.yml?query=branch%3Amain)
 ![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)
@@ -10,7 +10,7 @@ A Flask REST API shipped through a security-gated CI/CD pipeline: lint, type che
 ![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-D7FF64)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-The API is deliberately small. It serves as the **vehicle for a complete software delivery chain**. Every change goes through linting, static typing, security analysis, tests with a coverage threshold, a hardened image build, a smoke test and a vulnerability scan. Only then is the image published to a container registry.
+The API is deliberately small. It serves as the **vehicle for a complete software delivery chain**. Every change goes through linting, static typing, security analysis, tests with a coverage threshold, a hardened image build, a smoke test and a vulnerability scan. Only then is the image signed and published to a container registry.
 
 ![GitHub Actions run: four Python quality-gate jobs and Hadolint passing, then build, scan and publish of the image](docs/pipeline-run.png)
 
@@ -25,6 +25,7 @@ On many teams, the path from "works on my machine" to "running in production" is
 - **No change reaches `main` without passing automated quality gates.** The gates are the same locally (`make check`, pre-commit) and in CI.
 - **Vulnerabilities are caught before deployment**, both in the code (Bandit, SAST) and in the image (Trivy: OS and library CVEs).
 - **The deployable artifact is immutable and traceable**: every image is tagged with the SHA of the commit that produced it.
+- **What was scanned is exactly what gets published**: the image is pushed once by digest, gated, signed with Cosign and only then tagged. It ships with an SBOM and build provenance, so anyone can verify where it came from and what it contains.
 - **The local environment matches production**: the development and production images are built from the same base stage of a multi-stage Dockerfile, and the dev target has hot-reload.
 
 ---
@@ -44,12 +45,15 @@ flowchart LR
     gha --> QG
     gha --> hl[Hadolint<br/>Dockerfile]
 
-    QG --> build[Buildx<br/>target: runner<br/>GHA cache]
+    QG --> build[Buildx · amd64 + arm64<br/>push by digest, untagged<br/>+ SBOM + provenance]
     hl --> build
     build --> smoke[Smoke test<br/>GET /health]
-    smoke --> trivy[Trivy<br/>CRITICAL/HIGH = fail]
-    trivy -->|push to main only| ghcr[(GHCR · amd64 + arm64<br/>:sha · :latest)]
+    smoke --> trivy[Trivy · per platform<br/>CRITICAL/HIGH = fail]
+    trivy --> sign[Cosign<br/>keyless signature]
+    sign --> ghcr[(GHCR<br/>tag :sha · :latest)]
 ```
+
+The diagram shows a push to `main`. Pull requests run the same gates on a local, single-arch build and never push.
 
 ### Multi-stage Docker image
 
@@ -70,7 +74,8 @@ flowchart TB
 ├── tests/
 │   └── test_main.py         # Endpoint and error-path tests
 ├── .github/workflows/
-│   └── ci-cd.yml            # Pipeline: quality gates → build → smoke → scan → push
+│   └── ci-cd.yml            # Pipeline: quality gates → build → smoke → scan → sign → tag
+├── .github/dependabot.yml   # Weekly updates for pinned actions and Python deps
 ├── Dockerfile               # builder / base / development / runner
 ├── docker-compose.yml       # Local stack with hot-reload
 ├── pyproject.toml           # Metadata, dependencies and ruff/mypy/pytest/bandit config
@@ -101,9 +106,10 @@ flowchart TB
 | Typing | **mypy** (`disallow_untyped_defs`) | Requires typed signatures, so contract errors surface before the code runs. |
 | SAST | **Bandit** | Flags insecure Python patterns. It has already caught a real issue in this repo: a hardcoded `0.0.0.0` bind. |
 | Container | **Multi-stage Docker** | Wheels are bind-mounted from the builder and never become a layer. Runs as a non-root user with a fixed numeric UID (compatible with Kubernetes `runAsNonRoot`) and ships a `HEALTHCHECK`. Build-only tooling (setuptools, wheel) is removed from the runtime image. |
-| Image scanning | **Trivy** | Fails the pipeline on `CRITICAL`/`HIGH` CVEs that already have a fix. |
+| Image scanning | **Trivy** | Fails the pipeline on `CRITICAL`/`HIGH` CVEs that already have a fix. On `main` it scans the pushed digest for both architectures. |
+| Supply chain | **Cosign** (keyless) + **BuildKit** SBOM/provenance | The image is signed with the workflow's OIDC identity through Sigstore, so there are no keys to store or rotate. Each platform carries an SPDX SBOM and SLSA provenance, and the signature covers them. |
 | Registry | **GitHub Container Registry** | Authenticates with the built-in `GITHUB_TOKEN`, so there are no long-lived secrets to manage. Images are multi-arch (`linux/amd64` and `linux/arm64`), so they run natively on x86 servers and on Apple Silicon or Graviton. |
-| CI/CD | **GitHub Actions** | Python matrix, pip and Buildx layer caching (GHA), `concurrency` to cancel superseded runs, and a read-only token by default (`packages: write` only for the publish job). |
+| CI/CD | **GitHub Actions** | Python matrix, pip and Buildx layer caching (GHA), `concurrency` to cancel superseded runs, and a read-only token by default (`packages: write` and `id-token: write` only for the publish job). Every action is pinned to a commit SHA and kept current by **Dependabot**. |
 | Shift-left | **pre-commit** | Ruff, mypy and Hadolint run before every commit, so failures show up locally instead of in CI. |
 
 ---
@@ -169,14 +175,25 @@ curl localhost:5000/health    # {"status":"healthy"}
 
 ### Continuous delivery (GHCR)
 
-On every push to `main`, the `build-scan-push` job publishes the image after it passes the smoke test and the Trivy scan:
+On every push to `main`, the `publish` job builds the multi-arch image once and pushes it **by digest, without a tag**. It then runs the smoke test and a Trivy scan per architecture against that exact digest, signs it with Cosign, and only then points the `:<commit-sha>` and `:latest` tags at it. If a gate fails, no tag moves:
 
 ```bash
 docker pull ghcr.io/diegotepichin/cicd-pipeline:latest
 docker pull ghcr.io/diegotepichin/cicd-pipeline:<commit-sha>
 ```
 
-Images are built for `linux/amd64` and `linux/arm64`, and Docker pulls the right one automatically. The job authenticates with the workflow's `GITHUB_TOKEN`, so no extra secrets are needed. Pull requests run the same build, smoke test and scan, but they don't publish.
+Images are built for `linux/amd64` and `linux/arm64`, and Docker pulls the right one automatically. The job authenticates with the workflow's `GITHUB_TOKEN`, so no extra secrets are needed. Pull requests run the build, smoke test and scan in the `image-check` job, but they don't push anything.
+
+**Verify an image** (requires [Cosign](https://docs.sigstore.dev/cosign/system_config/installation/)). The signature must come from this repository's workflow on `main`. The last two commands print the SBOM and the build provenance:
+
+```bash
+cosign verify ghcr.io/diegotepichin/cicd-pipeline:latest \
+  --certificate-identity https://github.com/DiegoTepichin/cicd-pipeline/.github/workflows/ci-cd.yml@refs/heads/main \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+docker buildx imagetools inspect ghcr.io/diegotepichin/cicd-pipeline:latest --format '{{ json .SBOM }}'
+docker buildx imagetools inspect ghcr.io/diegotepichin/cicd-pipeline:latest --format '{{ json .Provenance }}'
+```
 
 ### Production integration
 
@@ -203,14 +220,14 @@ Measured locally on this commit:
 
 **Scalability.** The API is stateless, so it scales horizontally behind a load balancer with no changes. Vertically, Gunicorn uses workers (processes) × threads, configurable at runtime. A common starting point is `workers = 2 × CPU + 1`.
 
-**Practices applied:** 12-Factor App (config through the environment, logs to stdout), least privilege (non-root container, read-only CI token by default), shift-left security (SAST, image scanning, pre-commit), immutable artifacts, errors that never leak internal details, and Conventional Commits.
+**Practices applied:** 12-Factor App (config through the environment, logs to stdout), least privilege (non-root container, read-only CI token by default), shift-left security (SAST, image scanning, pre-commit), supply-chain security (signed images, SBOM, provenance, SHA-pinned actions), immutable artifacts, errors that never leak internal details, and Conventional Commits.
 
 ---
 
 ## Roadmap
 
-- [ ] Pin every GitHub Action by commit SHA (Trivy already is)
-- [ ] Generate an SBOM and sign the image (Syft + Cosign)
+- [x] Pin every GitHub Action by commit SHA, with Dependabot updates
+- [x] Generate an SBOM and sign the image (BuildKit's Syft scanner + Cosign)
 - [ ] Structured JSON logging and a `/metrics` endpoint (Prometheus)
 - [ ] Separate liveness and readiness once there are external dependencies
 - [ ] Automatic deployment to a staging environment
