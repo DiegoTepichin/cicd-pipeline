@@ -1,0 +1,25 @@
+version: 2
+updates:
+  # Bumps the pinned action SHAs and their version comments
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+
+  # Runtime deps (pyproject.toml + app/requirements.txt) and dev deps.
+  # The Dockerfile base image isn't listed: its tag comes from a build ARG,
+  # which Dependabot can't follow.
+  - package-ecosystem: pip
+    directories: ["/", "/app"]
+    schedule:
+      interval: weekly
+    groups:
+      python:
+        patterns: ["*"]
+    commit-message:
+      prefix: build
